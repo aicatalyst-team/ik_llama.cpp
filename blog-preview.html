@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Deploy ik_llama.cpp on OpenShift for CPU-only LLM inference. Step-by-step PoC with UBI containers, quantized Qwen3 models, and OpenAI-compatible API results.">
+  <title>Deploying ik_llama.cpp on OpenShift AI</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                   "Helvetica Neue", Arial, sans-serif;
+      line-height: 1.7;
+      color: #1a1a1a;
+      background: #fff;
+    }
+
+    /* --- Header --- */
+    .header {
+      background: #1a1a1a;
+      color: #fff;
+      padding: 1rem 2rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      border-bottom: 3px solid #e00;
+    }
+    .header .logo { font-weight: 700; font-size: 1.1rem; }
+    .header .logo span { color: #e00; }
+
+    /* --- Hero --- */
+    .hero {
+      background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+      color: #fff;
+      padding: 3rem 2rem;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: 2.2rem;
+      font-weight: 700;
+      max-width: 800px;
+      margin: 0 auto 0.75rem;
+      line-height: 1.3;
+    }
+    .hero .subtitle {
+      font-size: 1.15rem;
+      color: #ccc;
+      max-width: 700px;
+      margin: 0 auto 1.5rem;
+      font-style: italic;
+    }
+    .hero .meta {
+      font-size: 0.9rem;
+      color: #999;
+    }
+    .hero .meta span { margin: 0 0.5rem; }
+
+    /* --- Article --- */
+    article {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 2.5rem 1.5rem 4rem;
+    }
+
+    article h2 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      margin: 2.5rem 0 1rem;
+      padding-bottom: 0.3rem;
+      border-bottom: 2px solid #e00;
+      color: #1a1a1a;
+    }
+    article h3 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin: 2rem 0 0.75rem;
+      color: #333;
+    }
+    article h4 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin: 1.5rem 0 0.5rem;
+      color: #555;
+    }
+
+    article p {
+      margin: 0 0 1.2rem;
+      font-size: 1.05rem;
+    }
+
+    article ul, article ol {
+      margin: 0 0 1.2rem 1.5rem;
+      font-size: 1.05rem;
+    }
+    article li { margin-bottom: 0.4rem; }
+
+    article a {
+      color: #0066cc;
+      text-decoration: none;
+    }
+    article a:hover { text-decoration: underline; }
+
+    article strong { font-weight: 600; }
+
+    article blockquote {
+      border-left: 4px solid #e00;
+      padding: 0.75rem 1rem;
+      margin: 1.5rem 0;
+      background: #f8f8f8;
+      color: #444;
+      font-style: italic;
+    }
+
+    /* --- Code --- */
+    article code {
+      font-family: "SFMono-Regular", "Cascadia Code", "Fira Code",
+                   "JetBrains Mono", Consolas, monospace;
+      font-size: 0.9em;
+      background: #f0f0f0;
+      padding: 0.15em 0.4em;
+      border-radius: 3px;
+    }
+    article pre {
+      background: #1e1e1e;
+      color: #d4d4d4;
+      padding: 1.2rem 1.5rem;
+      border-radius: 6px;
+      overflow-x: auto;
+      margin: 1.2rem 0 1.5rem;
+      font-size: 0.9rem;
+      line-height: 1.5;
+    }
+    article pre code {
+      background: none;
+      padding: 0;
+      color: inherit;
+      font-size: inherit;
+    }
+
+    /* --- Tables --- */
+    article table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1.2rem 0 1.5rem;
+      font-size: 0.95rem;
+    }
+    article th {
+      background: #f0f0f0;
+      font-weight: 600;
+      text-align: left;
+      padding: 0.6rem 0.8rem;
+      border-bottom: 2px solid #ddd;
+    }
+    article td {
+      padding: 0.5rem 0.8rem;
+      border-bottom: 1px solid #eee;
+    }
+    article tr:hover { background: #fafafa; }
+
+    /* --- Image placeholders --- */
+    .image-placeholder {
+      border: 2px dashed #ccc;
+      border-radius: 8px;
+      padding: 1.5rem;
+      margin: 1.5rem 0;
+      background: #fafafa;
+      text-align: center;
+      color: #666;
+    }
+    .image-placeholder strong { color: #333; }
+
+    /* --- Footer --- */
+    .footer {
+      background: #1a1a1a;
+      color: #999;
+      padding: 2rem;
+      text-align: center;
+      font-size: 0.85rem;
+      margin-top: 3rem;
+    }
+
+    /* --- Responsive --- */
+    @media (max-width: 768px) {
+      .hero h1 { font-size: 1.6rem; }
+      article { padding: 1.5rem 1rem 3rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo">Open<span>Shift</span> AI — Developer Blog</div>
+  </div>
+
+  <div class="hero">
+    <h1>Deploying ik_llama.cpp on OpenShift AI</h1>
+    <div class="subtitle">ik_llama.</div>
+    <div class="meta">
+      <span>AutoPoC</span> &middot;
+      <span>May 2026</span> &middot;
+      <span>10 min read</span>
+    </div>
+  </div>
+
+  <article>
+    <h2>What is ik_llama.cpp?</h2>
+<p>If you've spent any time in the LLM inference world, you've almost certainly encountered <a href="https://github.com/ggerganov/llama.cpp">llama.cpp</a> — the project that proved you don't need a rack of GPUs to run large language models. <a href="https://github.com/ikawrakow/ik_llama.cpp">ik_llama.cpp</a> is a fork that pushes CPU and hybrid GPU/CPU performance even further, with novel quantization types (including IQ4_NL), Bitnet support, and DeepSeek MLA optimizations.</p>
+<p>The project is written in C/C++ with a CMake build system and ships a full-featured HTTP server (<code>llama-server</code>) that exposes an OpenAI-compatible API. That last point is critical: it means any application already wired to talk to the OpenAI API can point at ik_llama.cpp instead, no code changes required. The server supports chat completions, legacy completions, model listing, and more — all running against quantized GGUF model files that can fit in a few hundred megabytes of RAM.</p>
+<p>For this PoC, we built ik_llama.cpp from source, containerized it on a UBI base image, loaded a small Qwen3-0.6B model quantized to IQ4_NL (~400 MB), and deployed it to OpenShift as a CPU-only inference server.</p>
+<h2>Why this matters for OpenShift AI</h2>
+<p>OpenShift AI (and its upstream, Open Data Hub) has strong model serving capabilities through vLLM and KServe. But those components are GPU-centric and relatively heavy. Not every team has GPU nodes available, and not every use case requires a 70B parameter model.</p>
+<p>ik_llama.cpp occupies an interesting niche: it's a lightweight, CPU-friendly inference server that can run quantized models with surprisingly good performance. In an RHOAI evaluation, the project scored 55/100 — reflecting the fact that it operates outside the standard Red Hat AI stack, but also acknowledging its value for CPU and edge inference scenarios. The integration effort is real, but the payoff is clear: if you can serve a quantized model on CPU-only nodes, you've dramatically lowered the barrier to deploying LLM capabilities across your cluster.</p>
+<p>This PoC exercises the model-serving pattern: build a custom inference server image, deploy it as a long-running service, and validate that it responds correctly to OpenAI-compatible API calls. It's the kind of thing KServe could eventually front-end, giving you autoscaling and traffic management on top of ik_llama.cpp's raw inference performance.</p>
+<h2>Setting up the PoC</h2>
+<p>The infrastructure requirements for this PoC are refreshingly modest:</p>
+<ul>
+<li><strong>CPU/Memory:</strong> 2 vCPUs, 4 GiB RAM (the "large" resource profile). Quantized inference benefits from multiple cores for matrix multiplication, and the model plus runtime context need room in memory.</li>
+<li><strong>GPU:</strong> None. The whole point is CPU-only inference.</li>
+<li><strong>Storage:</strong> A 2 GiB PVC for model weights. The Qwen3-0.6B IQ4_NL GGUF file is roughly 400 MB, but we left headroom for experimenting with larger models.</li>
+<li><strong>Model:</strong> <a href="https://huggingface.co/bartowski/Qwen_Qwen3-0.6B-GGUF">Qwen3-0.6B-IQ4_NL</a> from Hugging Face, downloaded at container startup via the <code>LLAMA_MODEL_URL</code> environment variable.</li>
+<li><strong>Sidecar containers:</strong> None needed.</li>
+<li><strong>Vector DB / Embedding model:</strong> Not applicable for this pure inference serving PoC.</li>
+</ul>
+<p>The key decision was model selection. We wanted something small enough to load quickly on CPU, quantized with one of ik_llama.cpp's optimized formats, and capable enough to produce coherent responses. The 0.6B parameter Qwen3 model at IQ4_NL quantization hit that sweet spot.</p>
+<div class="image-placeholder">
+<p><strong>[Image Placeholder 1: Architecture diagram of the PoC deployment]</strong></p>
+<p><strong>Placement rationale</strong>: Readers benefit from seeing the overall deployment topology before diving into Dockerfile and YAML details.</p>
+<p><strong>Image generation prompt</strong>: A clean technical architecture diagram on a white background showing: a Kubernetes pod containing a single container labeled "ik_llama.cpp server" with port 8080 exposed, connected to a PVC labeled "model-storage (2Gi)" containing a file icon labeled "model.gguf". An arrow from HuggingFace (cloud icon) points to the PVC labeled "download at startup". A Kubernetes Service routes traffic to the pod. Use flat design, blue and gray color palette with Red Hat red accents, 16:9 aspect ratio.</p>
+<p><strong>Alt text</strong>: Architecture diagram showing an OpenShift deployment with a single pod running the ik_llama.cpp server on port 8080, connected to a 2Gi persistent volume storing the GGUF model file downloaded from Hugging Face at startup.</p>
+</div>
+<h2>Containerizing with UBI</h2>
+<p>Building ik_llama.cpp from source in a container is straightforward — it's a well-structured CMake project. We used a multi-stage build with a UBI base image to keep the final image lean while having full build tooling available during compilation:</p>
+<pre><code class="language-dockerfile">
+FROM registry.access.redhat.com/ubi9/ubi:latest AS builder
+
+RUN dnf install -y gcc gcc-c++ cmake make git && dnf clean all
+
+WORKDIR /build
+COPY . .
+RUN cmake -B build -DLLAMA_CURL=OFF -DLLAMA_NATIVE=OFF \
+      -DCMAKE_BUILD_TYPE=Release && \
+    cmake --build build --target llama-server -j$(nproc)
+
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
+RUN microdnf install -y libstdc++ curl && microdnf clean all
+COPY --from=builder /build/build/bin/llama-server /app/build/bin/llama-server
+RUN mkdir -p /models
+EXPOSE 8080
+</code></pre>
+<p>Two things worth noting. First, we disabled <code>LLAMA_NATIVE=OFF</code> to avoid compiling with CPU-specific instruction sets that might not match the target node — portability over peak performance. Second, we disabled <code>LLAMA_CURL</code> to avoid a build dependency; model downloads happen via a startup script rather than built-in curl support in the binary.</p>
+<p>The final image landed at a reasonable size. The <code>llama-server</code> binary is statically linked against the llama.cpp libraries, so the runtime layer only needs the C++ standard library and curl for model fetching.</p>
+<h2>Deploying to Kubernetes</h2>
+<p>We deployed as a standard Kubernetes Deployment with a Service, rather than a Job, since this is a long-running inference server. The model download happens in an init container or startup script, and the GGUF file persists on a PVC so subsequent pod restarts don't re-download it.</p>
+<pre><code class="language-yaml">
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ik-llama-cpp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ik-llama-cpp
+  template:
+    spec:
+      containers:
+        - name: llama-server
+          image: quay.io/aicatalyst/ik_llama.cpp-ik_llama.cpp:latest
+          command:
+            - /app/build/bin/llama-server
+          args:
+            - --model
+            - /models/model.gguf
+            - --host
+            - "0.0.0.0"
+            - --port
+            - "8080"
+            - --ctx-size
+            - "2048"
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          volumeMounts:
+            - name: model-storage
+              mountPath: /models
+      volumes:
+        - name: model-storage
+          persistentVolumeClaim:
+            claimName: ik-llama-models
+</code></pre>
+<p>The context size of 2048 tokens keeps memory usage predictable for this small model. In production, you'd tune this based on your use case — longer contexts for RAG, shorter for quick Q&A.</p>
+<div class="image-placeholder">
+<p><strong>[Image Placeholder 2: Screenshot of test results or server logs showing successful model load]</strong></p>
+<p><strong>Placement rationale</strong>: Placing a visual confirmation of the running server here bridges the deployment section and the test results, giving readers confidence the setup works.</p>
+<p><strong>Image generation prompt</strong>: A terminal screenshot showing server startup logs with a dark background (dark gray/black). The logs show: model loading progress, "model loaded" confirmation, and "listening on 0.0.0.0:8080" message. Use a monospace font, green and white text on dark background, 16:9 aspect ratio. Include a subtle OpenShift/Kubernetes context indicator in the terminal prompt.</p>
+<p><strong>Alt text</strong>: Terminal output showing ik_llama.cpp server startup logs, including model loading progress and a confirmation message that the server is listening on port 8080.</p>
+</div>
+<h2>Test results</h2>
+<p>We ran five test scenarios against the deployed server. Here's what happened:</p>
+<table>
+<tr><th>Scenario</th><th>Endpoint</th><th>Status</th><th>Duration</th></tr>
+<tr><td>Health check</td><td>`GET /health`</td><td>✅ PASS</td><td>0.0s</td></tr>
+<tr><td>Model properties</td><td>`GET /props`</td><td>✅ PASS</td><td>0.0s</td></tr>
+<tr><td>Chat completion (OpenAI-compatible)</td><td>`POST /v1/chat/completions`</td><td>❌ FAIL</td><td>6.0s</td></tr>
+<tr><td>Legacy completions</td><td>`POST /completion`</td><td>✅ PASS</td><td>3.3s</td></tr>
+<tr><td>Model list</td><td>`GET /v1/models`</td><td>✅ PASS</td><td>0.0s</td></tr>
+</table>
+<p><strong>4 out of 5 scenarios passed.</strong> The server started cleanly, loaded the model, and responded to health checks, property queries, and the model listing endpoint instantly. The legacy completions endpoint worked correctly in 3.3 seconds — confirming that CPU inference is genuinely functional and producing results in a reasonable timeframe for a 0.6B model.</p>
+<p>The one failure was the OpenAI-compatible chat completion endpoint (<code>/v1/chat/completions</code>). The request took 6 seconds before failing. This is notable because the legacy <code>/completion</code> endpoint worked fine, which means the core inference pipeline is healthy. The issue likely lies in how the chat template is applied to the Qwen3 model — ik_llama.cpp may not have the correct chat template registered for this specific model, or there may be a response formatting issue in the OpenAI compatibility layer. This is the kind of thing that's straightforward to debug: check the server logs for the specific error, try a different model with a well-known chat template, or explicitly pass a chat template via the <code>--chat-template</code> flag.</p>
+<p>The 3.3-second inference time on the legacy completions endpoint deserves attention. For a CPU-only deployment with a quantized 0.6B model, that's entirely usable for many applications — chatbots, code assistants, document summarization with short contexts.</p>
+<div class="image-placeholder">
+<p><strong>[Image Placeholder 3: Bar chart showing test results with pass/fail status and duration]</strong></p>
+<p><strong>Placement rationale</strong>: A visual summary of test results makes the pass/fail ratio immediately scannable and highlights the inference duration differences between endpoints.</p>
+<p><strong>Image generation prompt</strong>: A horizontal bar chart on a clean white background showing five test scenarios. Four bars are green (pass) and one is red (fail, labeled "chat-completion"). The x-axis shows duration in seconds (0-7s). The health-check, model-props, and model-list bars are very short (~0s), completions-endpoint is ~3.3s, and chat-completion is ~6s with a red X. Use flat design, sans-serif labels, 16:9 aspect ratio.</p>
+<p><strong>Alt text</strong>: Horizontal bar chart showing five test scenarios: health-check, model-props, and model-list passed in under 0.1 seconds; completions-endpoint passed in 3.3 seconds; chat-completion failed at 6.0 seconds.</p>
+</div>
+<h2>What we learned</h2>
+<p><strong>CPU-only LLM inference is viable on OpenShift.</strong> This isn't a theoretical claim — we got a working inference server responding in 3.3 seconds with no GPU resources. For teams that don't have GPU nodes or are deploying to edge locations, this is a real option.</p>
+<p><strong>The OpenAI compatibility layer needs per-model attention.</strong> The chat completions failure with Qwen3 is a reminder that "OpenAI-compatible" doesn't mean "works identically with every model." Chat templates, stop tokens, and response formatting vary by model family. If you're deploying this in production, test your specific model against the specific endpoints your application uses.</p>
+<p><strong>ik_llama.cpp sits outside the RHOAI stack, and that's okay.</strong> The RHOAI fitness score of 55/100 reflects a genuine gap: this isn't vLLM, it doesn't plug into KServe natively, and it lacks the observability integrations that come with the supported stack. But it fills a niche that the supported stack doesn't cover well today — lightweight, CPU-optimized inference for quantized models. A natural next step would be wrapping this behind a KServe InferenceService for autoscaling and unified model management.</p>
+<p><strong>What we'd do differently:</strong> We'd pass an explicit <code>--chat-template</code> flag for the Qwen3 model to resolve the chat completions failure. We'd also benchmark with a slightly larger model (2-3B parameters) to find the practical ceiling for CPU-only inference on a 4 GiB memory budget. And we'd add a readiness probe tied to <code>/health</code> to ensure Kubernetes doesn't route traffic before the model is loaded.</p>
+<h2>Try it yourself</h2>
+<p>If you want to reproduce this PoC or build on it, here's everything you need:</p>
+<ul>
+<li><strong>Forked repository:</strong> <a href="https://github.com/aicatalyst-team/ik_llama.cpp.git">aicatalyst-team/ik_llama.cpp</a></li>
+<li><strong>Container image:</strong> <code>quay.io/aicatalyst/ik_llama.cpp-ik_llama.cpp:latest</code></li>
+<li><strong>Upstream project:</strong> <a href="https://github.com/ikawrakow/ik_llama.cpp">ikawrakow/ik_llama.cpp</a></li>
+<li><strong>Model used:</strong> <a href="https://huggingface.co/bartowski/Qwen_Qwen3-0.6B-GGUF">Qwen3-0.6B-IQ4_NL GGUF</a></li>
+<li><strong>Open Data Hub documentation:</strong> <a href="https://opendatahub.io/">opendatahub.io</a></li>
+</ul>
+<p>Pull the image, point it at a GGUF model, and you've got a CPU-powered LLM inference server running on OpenShift in minutes. If you want to investigate the chat completions issue, the server logs are your best starting point — and contributions back to the upstream project are always welcome.</p>
+  </article>
+
+  <div class="footer">
+    <p>Generated by AutoPoC &middot; Preview only — not for publication</p>
+  </div>
+</body>
+</html>
