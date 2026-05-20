@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ik-llama-cpp
+  labels:
+    app.kubernetes.io/name: ik-llama-cpp
+    app.kubernetes.io/managed-by: autopoc

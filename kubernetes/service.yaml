@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ik-llama-cpp
+  namespace: ik-llama-cpp
+  labels:
+    app.kubernetes.io/name: ik-llama-cpp
+    app.kubernetes.io/component: ik-llama-cpp
+    app.kubernetes.io/managed-by: autopoc
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: ik-llama-cpp
+    app.kubernetes.io/component: ik-llama-cpp
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP

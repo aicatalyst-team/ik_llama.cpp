@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ik-llama-cpp
+  namespace: ik-llama-cpp
+  labels:
+    app.kubernetes.io/name: ik-llama-cpp
+    app.kubernetes.io/component: ik-llama-cpp
+    app.kubernetes.io/managed-by: autopoc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ik-llama-cpp
+      app.kubernetes.io/component: ik-llama-cpp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ik-llama-cpp
+        app.kubernetes.io/component: ik-llama-cpp
+    spec:
+      containers:
+        - name: ik-llama-cpp
+          image: quay.io/aicatalyst/ik_llama.cpp-ik_llama.cpp:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          env:
+            - name: LLAMA_MODEL_URL
+              value: "https://huggingface.co/bartowski/Qwen_Qwen3-0.6B-GGUF/resolve/main/Qwen_Qwen3-0.6B-IQ4_NL.gguf"
+          volumeMounts:
+            - name: model-storage
+              mountPath: /models
+          resources:
+            requests:
+              memory: "4Gi"
+              cpu: "2000m"
+            limits:
+              memory: "8Gi"
+              cpu: "4000m"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 90
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 120
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: model-storage
+          persistentVolumeClaim:
+            claimName: ik-llama-cpp-models
