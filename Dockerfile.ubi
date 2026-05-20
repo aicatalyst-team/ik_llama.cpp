@@ -38,10 +38,13 @@ RUN mkdir -p /app/dist/lib /app/dist/bin \
 # ==============================================================================
 FROM registry.access.redhat.com/ubi9/ubi-minimal
 
-# Runtime dependencies: libcurl (HTTP client for model download), libgomp (OpenMP)
+# Runtime dependencies:
+#   curl-minimal  — CLI tool for model download (also pulls in libcurl-minimal)
+#   libgomp       — OpenMP for parallel CPU inference
+#   ca-certificates — TLS certs for HTTPS downloads
 USER 0
 RUN microdnf install -y \
-        libcurl-minimal \
+        curl-minimal \
         libgomp \
         ca-certificates \
     && microdnf clean all
@@ -60,13 +63,15 @@ COPY --from=builder /app/dist/lib/            /opt/app-root/src/lib/
 # Create model directory (models should be mounted or downloaded at runtime)
 RUN mkdir -p /models
 
-# Create startup script that downloads model if not present, then launches server
+# Create startup script that downloads model if not present, then launches server.
+# Uses curl -L to follow HuggingFace redirects, --connect-timeout to fail fast on
+# network issues, and --retry for transient failures.
 RUN printf '#!/bin/sh\n\
 set -e\n\
 MODEL_PATH="/models/model.gguf"\n\
 if [ ! -f "$MODEL_PATH" ]; then\n\
   echo "Model not found at $MODEL_PATH, downloading from $LLAMA_MODEL_URL ..."\n\
-  curl -fSL --progress-bar -o "$MODEL_PATH" "$LLAMA_MODEL_URL"\n\
+  curl -fSL --connect-timeout 30 --retry 3 --retry-delay 5 -o "$MODEL_PATH" "$LLAMA_MODEL_URL"\n\
   echo "Download complete."\n\
 fi\n\
 exec /opt/app-root/src/bin/llama-server \\\n\
