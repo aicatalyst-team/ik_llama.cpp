@@ -14,9 +14,7 @@ spec:
   strategy:
     type: Recreate
   # Allow up to 1800 seconds (30 min) for rollout.
-  # The model download from HuggingFace (~400 MB) plus model loading into
-  # memory can take significant time, especially on slower networks or when
-  # HuggingFace CDN is congested. Previous attempt timed out at 900s.
+  # The model download (~400 MB) plus loading can take significant time.
   progressDeadlineSeconds: 1800
   selector:
     matchLabels:
@@ -29,10 +27,71 @@ spec:
         app.kubernetes.io/component: ik-llama-cpp
     spec:
       terminationGracePeriodSeconds: 30
+      # ----------------------------------------------------------------
+      # Init container: download the model BEFORE the server starts.
+      # This separates the slow network download from the server process,
+      # making startup more predictable and debuggable. Uses the same
+      # image so curl is available.
+      # ----------------------------------------------------------------
+      initContainers:
+        - name: model-downloader
+          image: quay.io/aicatalyst/ik_llama.cpp-ik_llama.cpp:latest
+          imagePullPolicy: Always
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              MODEL_PATH="/models/model.gguf"
+              if [ -f "$MODEL_PATH" ]; then
+                echo "Model already present at $MODEL_PATH ($(du -h "$MODEL_PATH" | cut -f1)), skipping download."
+                exit 0
+              fi
+              echo "Downloading model from $LLAMA_MODEL_URL ..."
+              curl -fSL \
+                --connect-timeout 60 \
+                --retry 5 \
+                --retry-delay 10 \
+                --retry-all-errors \
+                -o "$MODEL_PATH.tmp" \
+                "$LLAMA_MODEL_URL"
+              mv "$MODEL_PATH.tmp" "$MODEL_PATH"
+              echo "Download complete: $(du -h "$MODEL_PATH" | cut -f1)"
+          env:
+            - name: LLAMA_MODEL_URL
+              value: "https://huggingface.co/bartowski/Qwen_Qwen3-0.6B-GGUF/resolve/main/Qwen_Qwen3-0.6B-IQ4_NL.gguf"
+          volumeMounts:
+            - name: model-storage
+              mountPath: /models
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
       containers:
         - name: ik-llama-cpp
           image: quay.io/aicatalyst/ik_llama.cpp-ik_llama.cpp:latest
           imagePullPolicy: Always
+          # Override the entrypoint to launch the server directly,
+          # since the init container already downloaded the model.
+          command:
+            - /opt/app-root/src/bin/llama-server
+          args:
+            - "--model"
+            - "/models/model.gguf"
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "8080"
+            - "--ctx-size"
+            - "2048"
           ports:
             - containerPort: 8080
               protocol: TCP
@@ -42,27 +101,33 @@ spec:
           volumeMounts:
             - name: model-storage
               mountPath: /models
+          # --------------------------------------------------------
+          # Reduced resource requests for better schedulability.
+          # The Qwen3-0.6B IQ4_NL model is ~400 MB on disk and
+          # ~600-800 MB in memory. 2Gi request with 6Gi limit gives
+          # headroom for inference buffers and context.
+          # --------------------------------------------------------
           resources:
             requests:
-              memory: "4Gi"
-              cpu: "2000m"
+              memory: "2Gi"
+              cpu: "1000m"
             limits:
-              memory: "8Gi"
+              memory: "6Gi"
               cpu: "4000m"
           # ---------------------------------------------------------
           # Startup probe: dominates during initial bring-up.
-          # Allows up to 1500s (150 × 10s) for the entrypoint to
-          # download the ~400 MB GGUF model AND load it into memory.
-          # Once this probe succeeds, readiness/liveness take over.
+          # Allows up to 1200s (120 × 10s) for model loading into
+          # memory. The download is already done by the init container
+          # so this only covers model loading + warm-up.
           # ---------------------------------------------------------
           startupProbe:
             httpGet:
               path: /health
               port: 8080
-            initialDelaySeconds: 15
+            initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 5
-            failureThreshold: 150
+            failureThreshold: 120
           # Readiness: controls traffic routing — quick check once
           # the startup probe has passed.
           readinessProbe:
