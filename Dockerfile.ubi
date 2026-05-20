@@ -1,0 +1,94 @@
+# ==============================================================================
+# Stage 1: Builder — compile llama.cpp from source
+# ==============================================================================
+FROM registry.access.redhat.com/ubi9/ubi-minimal AS builder
+
+# Install build toolchain and dependencies
+USER 0
+RUN microdnf install -y \
+        gcc \
+        gcc-c++ \
+        make \
+        cmake \
+        git \
+        libcurl-devel \
+        openssl-devel \
+    && microdnf clean all
+USER 1001
+
+WORKDIR /app
+
+# Copy source tree
+COPY . /app
+
+# Configure and build for portable CPU (GGML_NATIVE=OFF)
+RUN cmake -B build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DGGML_NATIVE=OFF \
+        -DLLAMA_CURL=ON \
+        -DLLAMA_BUILD_TESTS=OFF \
+    && cmake --build build --config Release -j"$(nproc)"
+
+# Collect shared libraries next to binaries for easy COPY
+RUN mkdir -p /app/dist/lib /app/dist/bin \
+    && find build -name "*.so" -exec cp {} /app/dist/lib/ \; \
+    && cp build/bin/llama-server /app/dist/bin/
+
+# ==============================================================================
+# Stage 2: Runtime — minimal image with only the server binary
+# ==============================================================================
+FROM registry.access.redhat.com/ubi9/ubi-minimal
+
+# Runtime dependencies: libcurl (HTTP client for model download), libgomp (OpenMP)
+USER 0
+RUN microdnf install -y \
+        libcurl-minimal \
+        libgomp \
+        ca-certificates \
+    && microdnf clean all
+USER 1001
+
+# Environment variables
+ENV LLAMA_MODEL_URL=https://huggingface.co/bartowski/Qwen_Qwen3-0.6B-GGUF/resolve/main/Qwen_Qwen3-0.6B-IQ4_NL.gguf \
+    LLAMA_ARG_HOST=0.0.0.0 \
+    LD_LIBRARY_PATH=/opt/app-root/src/lib
+
+WORKDIR /opt/app-root/src
+
+# Copy build artifacts
+COPY --from=builder /app/dist/bin/llama-server /opt/app-root/src/bin/llama-server
+COPY --from=builder /app/dist/lib/            /opt/app-root/src/lib/
+
+# Create model directory (models should be mounted or downloaded at runtime)
+RUN mkdir -p /models
+
+# Create startup script that downloads model if not present, then launches server
+RUN printf '#!/bin/sh\n\
+set -e\n\
+MODEL_PATH="/models/model.gguf"\n\
+if [ ! -f "$MODEL_PATH" ]; then\n\
+  echo "Model not found at $MODEL_PATH, downloading from $LLAMA_MODEL_URL ..."\n\
+  curl -fSL --progress-bar -o "$MODEL_PATH" "$LLAMA_MODEL_URL"\n\
+  echo "Download complete."\n\
+fi\n\
+exec /opt/app-root/src/bin/llama-server \\\n\
+  --model "$MODEL_PATH" \\\n\
+  --host 0.0.0.0 \\\n\
+  --port 8080 \\\n\
+  --ctx-size 2048 \\\n\
+  "$@"\n' > /opt/app-root/src/entrypoint.sh \
+    && chmod +x /opt/app-root/src/entrypoint.sh
+
+# OpenShift compatibility: group 0 permissions for arbitrary UID
+USER 0
+RUN chgrp -R 0 /opt/app-root /models \
+    && chmod -R g=u /opt/app-root /models
+USER 1001
+
+EXPOSE 8080
+
+# Run as non-root (OpenShift arbitrary UID lands in group 0)
+USER 1001
+
+ENTRYPOINT ["/opt/app-root/src/entrypoint.sh"]
+CMD []
