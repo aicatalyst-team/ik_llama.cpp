@@ -9,6 +9,13 @@ metadata:
     app.kubernetes.io/managed-by: autopoc
 spec:
   replicas: 1
+  # CRITICAL: Use Recreate strategy because the PVC is ReadWriteOnce.
+  # RollingUpdate would deadlock — the new pod cannot mount the PVC while
+  # the old pod still has it, so the old pod never terminates.
+  strategy:
+    type: Recreate
+  # Allow up to 900 seconds for rollout (model download + loading)
+  progressDeadlineSeconds: 900
   selector:
     matchLabels:
       app.kubernetes.io/name: ik-llama-cpp
@@ -19,13 +26,14 @@ spec:
         app.kubernetes.io/name: ik-llama-cpp
         app.kubernetes.io/component: ik-llama-cpp
     spec:
-      # Init container downloads the GGUF model to the PVC before the main
-      # container starts.  This avoids relying on the 'curl' CLI being
-      # present in the UBI-minimal runtime image (libcurl-minimal ships
-      # only the library, not the curl binary).
+      # Give the pod enough time to download and load the model
+      terminationGracePeriodSeconds: 30
       initContainers:
+        # Download the GGUF model to the PVC before the main container starts.
+        # Uses registry.access.redhat.com/ubi9/ubi which ships with curl by
+        # default — unlike ubi-minimal which only has libcurl-minimal (no CLI).
         - name: model-downloader
-          image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+          image: registry.access.redhat.com/ubi9/ubi:latest
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
@@ -38,8 +46,6 @@ spec:
                 ls -lh "$MODEL_PATH"
                 exit 0
               fi
-              echo "Installing curl..."
-              microdnf install -y curl && microdnf clean all
               echo "Downloading model from $LLAMA_MODEL_URL ..."
               curl -fSL --progress-bar --retry 3 --retry-delay 5 \
                    -o "$MODEL_PATH.tmp" "$LLAMA_MODEL_URL"
@@ -84,14 +90,14 @@ spec:
             limits:
               memory: "8Gi"
               cpu: "4000m"
-          # Startup probe: allow up to 600s (60 x 10s) for model loading.
+          # Startup probe: allow up to 600s (60 × 10s) for model loading.
           # The init container already downloaded the model, so this covers
-          # only the time to mmap/load the GGUF into memory.
+          # only the time to mmap/load the GGUF into memory and warm up.
           startupProbe:
             httpGet:
               path: /health
               port: 8080
-            initialDelaySeconds: 5
+            initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 60
