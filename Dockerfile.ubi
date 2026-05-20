@@ -3,7 +3,7 @@
 # ==============================================================================
 FROM registry.access.redhat.com/ubi9/ubi-minimal AS builder
 
-# Install build toolchain and dependencies
+# Install build toolchain and dependencies — stay as root for entire build stage
 USER 0
 RUN microdnf install -y \
         gcc \
@@ -14,7 +14,6 @@ RUN microdnf install -y \
         libcurl-devel \
         openssl-devel \
     && microdnf clean all
-USER 1001
 
 WORKDIR /app
 
@@ -29,7 +28,7 @@ RUN cmake -B build \
         -DLLAMA_BUILD_TESTS=OFF \
     && cmake --build build --config Release -j"$(nproc)"
 
-# Collect shared libraries next to binaries for easy COPY
+# Collect shared libraries and server binary for easy COPY
 RUN mkdir -p /app/dist/lib /app/dist/bin \
     && find build -name "*.so" -exec cp {} /app/dist/lib/ \; \
     && cp build/bin/llama-server /app/dist/bin/
@@ -46,7 +45,6 @@ RUN microdnf install -y \
         libgomp \
         ca-certificates \
     && microdnf clean all
-USER 1001
 
 # Environment variables
 ENV LLAMA_MODEL_URL=https://huggingface.co/bartowski/Qwen_Qwen3-0.6B-GGUF/resolve/main/Qwen_Qwen3-0.6B-IQ4_NL.gguf \
@@ -80,15 +78,12 @@ exec /opt/app-root/src/bin/llama-server \\\n\
     && chmod +x /opt/app-root/src/entrypoint.sh
 
 # OpenShift compatibility: group 0 permissions for arbitrary UID
-USER 0
 RUN chgrp -R 0 /opt/app-root /models \
     && chmod -R g=u /opt/app-root /models
+
 USER 1001
 
 EXPOSE 8080
-
-# Run as non-root (OpenShift arbitrary UID lands in group 0)
-USER 1001
 
 ENTRYPOINT ["/opt/app-root/src/entrypoint.sh"]
 CMD []
