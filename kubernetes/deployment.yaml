@@ -9,13 +9,15 @@ metadata:
     app.kubernetes.io/managed-by: autopoc
 spec:
   replicas: 1
-  # CRITICAL: Use Recreate strategy because the PVC is ReadWriteOnce.
-  # RollingUpdate would deadlock — the new pod cannot mount the PVC while
-  # the old pod still has it, so the old pod never terminates.
+  # Recreate strategy: the PVC is ReadWriteOnce so RollingUpdate would
+  # deadlock — the new pod can't mount the PVC while the old pod holds it.
   strategy:
     type: Recreate
-  # Allow up to 900 seconds for rollout (model download + loading)
-  progressDeadlineSeconds: 900
+  # Allow up to 1800 seconds (30 min) for rollout.
+  # The model download from HuggingFace (~400 MB) plus model loading into
+  # memory can take significant time, especially on slower networks or when
+  # HuggingFace CDN is congested. Previous attempt timed out at 900s.
+  progressDeadlineSeconds: 1800
   selector:
     matchLabels:
       app.kubernetes.io/name: ik-llama-cpp
@@ -26,50 +28,7 @@ spec:
         app.kubernetes.io/name: ik-llama-cpp
         app.kubernetes.io/component: ik-llama-cpp
     spec:
-      # Give the pod enough time to download and load the model
       terminationGracePeriodSeconds: 30
-      initContainers:
-        # Download the GGUF model to the PVC before the main container starts.
-        # Uses registry.access.redhat.com/ubi9/ubi which ships with curl by
-        # default — unlike ubi-minimal which only has libcurl-minimal (no CLI).
-        - name: model-downloader
-          image: registry.access.redhat.com/ubi9/ubi:latest
-          imagePullPolicy: Always
-          command:
-            - /bin/sh
-            - -c
-            - |
-              set -e
-              MODEL_PATH="/models/model.gguf"
-              if [ -f "$MODEL_PATH" ]; then
-                echo "Model already present at $MODEL_PATH — skipping download."
-                ls -lh "$MODEL_PATH"
-                exit 0
-              fi
-              echo "Downloading model from $LLAMA_MODEL_URL ..."
-              curl -fSL --progress-bar --retry 3 --retry-delay 5 \
-                   -o "$MODEL_PATH.tmp" "$LLAMA_MODEL_URL"
-              mv "$MODEL_PATH.tmp" "$MODEL_PATH"
-              echo "Download complete:"
-              ls -lh "$MODEL_PATH"
-          env:
-            - name: LLAMA_MODEL_URL
-              value: "https://huggingface.co/bartowski/Qwen_Qwen3-0.6B-GGUF/resolve/main/Qwen_Qwen3-0.6B-IQ4_NL.gguf"
-          volumeMounts:
-            - name: model-storage
-              mountPath: /models
-          resources:
-            requests:
-              memory: "256Mi"
-              cpu: "250m"
-            limits:
-              memory: "512Mi"
-              cpu: "500m"
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop:
-                - ALL
       containers:
         - name: ik-llama-cpp
           image: quay.io/aicatalyst/ik_llama.cpp-ik_llama.cpp:latest
@@ -90,17 +49,22 @@ spec:
             limits:
               memory: "8Gi"
               cpu: "4000m"
-          # Startup probe: allow up to 600s (60 × 10s) for model loading.
-          # The init container already downloaded the model, so this covers
-          # only the time to mmap/load the GGUF into memory and warm up.
+          # ---------------------------------------------------------
+          # Startup probe: dominates during initial bring-up.
+          # Allows up to 1500s (150 × 10s) for the entrypoint to
+          # download the ~400 MB GGUF model AND load it into memory.
+          # Once this probe succeeds, readiness/liveness take over.
+          # ---------------------------------------------------------
           startupProbe:
             httpGet:
               path: /health
               port: 8080
-            initialDelaySeconds: 10
+            initialDelaySeconds: 15
             periodSeconds: 10
             timeoutSeconds: 5
-            failureThreshold: 60
+            failureThreshold: 150
+          # Readiness: controls traffic routing — quick check once
+          # the startup probe has passed.
           readinessProbe:
             httpGet:
               path: /health
@@ -109,13 +73,16 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 3
+          # Liveness: restarts the container if it stops responding.
+          # Generous thresholds to avoid killing during large-context
+          # inference that may temporarily block the event loop.
           livenessProbe:
             httpGet:
               path: /health
               port: 8080
             initialDelaySeconds: 10
-            periodSeconds: 15
-            timeoutSeconds: 5
+            periodSeconds: 30
+            timeoutSeconds: 10
             failureThreshold: 6
           securityContext:
             allowPrivilegeEscalation: false
