@@ -34,7 +34,7 @@ spec:
         # default — unlike ubi-minimal which only has libcurl-minimal (no CLI).
         - name: model-downloader
           image: registry.access.redhat.com/ubi9/ubi:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           command:
             - /bin/sh
             - -c
