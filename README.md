@@ -1,4 +1,10 @@
-# ik_llama.cpp: llama.cpp fork with better CPU performance
+> [!WARNING]
+> **This repository is archived.**
+>
+> Archived on 2026-09-08 by the AI Catalyst Platform Team.
+> It is read-only and no longer maintained.
+
+---# ik_llama.cpp: llama.cpp fork with better CPU performance
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
